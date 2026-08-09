@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+
+# Build context: this repo. passkey-rs via Compose additional_contexts.
+FROM rust:1-bookworm AS builder
+WORKDIR /src/demo
+COPY --from=passkey_rs . /src/passkey-rs
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY static ./static
+RUN cargo build --release --bin rust-axum-passkey \
+    && strip target/release/rust-axum-passkey
+
+# Без apt в runtime (DNS/mirror в CI/Desktop часто флапает) — сертификаты из builder.
+FROM debian:bookworm-slim AS runtime
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /etc/ssl/certs /etc/ssl/certs
+WORKDIR /app
+COPY --from=builder /src/demo/target/release/rust-axum-passkey /app/
+COPY --from=builder /src/demo/static /app/static
+ENV HTTP_ADDR=0.0.0.0:8080 \
+    HTTPS_ADDR=0.0.0.0:8443 \
+    CERT_DIR=/app/certs \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    RUST_LOG=info,passkey_rs=debug,rust_axum_passkey=debug
+EXPOSE 8080 8443
+CMD ["./rust-axum-passkey"]
