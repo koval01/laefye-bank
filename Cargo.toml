@@ -1,0 +1,89 @@
+[package]
+name = "laefye-bank"
+version = "0.1.0"
+edition = "2024"
+description = "Laefye neo-bank — passkeys + double-entry ledger"
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true
+debug = false
+
+[[bin]]
+name = "laefye-bank"
+path = "src/main.rs"
+
+# Compile only the HTTP surfaces needed for each image:
+#   public edge  → --no-default-features --features customer-api
+#   corp admin   → --no-default-features --features admin-api
+# Local `cargo build` keeps both by default.
+[features]
+default = ["customer-api", "admin-api"]
+customer-api = []
+admin-api = []
+
+[dependencies]
+passkey-rs = { path = "../passkey-rs", features = ["postgres", "redis"] }
+async-trait = "0.1"
+
+axum = { version = "0.8", features = ["macros", "multipart"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.7", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
+rcgen = "0.14"
+regex-lite = "0.1.9"
+which = "8.0.5"
+url = "2.5.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1", features = ["serde", "v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+time = { version = "0.3", features = ["formatting"] }
+thiserror = "2"
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls",
+  "postgres",
+  "uuid",
+  "chrono",
+  "macros",
+  "rust_decimal",
+] }
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+quick-xml = { version = "0.37", features = ["serialize"] }
+aes-gcm = "0.10"
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.22"
+aws-sdk-s3 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
+aws-credential-types = "1"
+bytes = "1"
+secp256k1 = { version = "0.29", features = ["rand", "global-context", "recovery"] }
+sha3 = "0.10"
+hex = "0.4"
+bs58 = "0.5"
+hmac = "0.12"
+printpdf = { version = "0.7", default-features = false, features = ["embedded_images"] }
+prost = "0.14.4"
+prost-types = "0.14.4"
+redis = { version = "1.5.0", features = ["tokio-comp", "connection-manager"] }
+tower = "0.5.3"
+hkdf = "0.12"
+p256 = { version = "0.13", features = ["ecdh"] }
+ed25519-dalek = { version = "2", features = ["rand_core", "std"] }
+qrcode = { version = "0.14", default-features = false }
+
+[build-dependencies]
+prost-build = "0.14.4"
+protoc-bin-vendored = "3.2.0"

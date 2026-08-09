@@ -14,6 +14,11 @@ pub async fn block_localhost_host(req: Request, next: Next) -> Response {
         return next.run(req).await;
     }
 
+    // Container health probes use Host: localhost — allow them through.
+    if req.uri().path() == "/healthz" {
+        return next.run(req).await;
+    }
+
     let host = req
         .headers()
         .get(axum::http::header::HOST)

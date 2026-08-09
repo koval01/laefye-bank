@@ -1,0 +1,90 @@
+syntax = "proto3";
+package laefye.v1;
+
+// Single public surface: POST /api with ApiFrame.
+// Passkey ceremonies, PDF binary, multipart KYC, and heartbeat cookies stay outside.
+
+message Empty {}
+
+// Outer wire frame — every browser call looks identical at the HTTP layer.
+message ApiFrame {
+  oneof payload {
+    Empty challenge_req = 1;
+    ChallengeResponse challenge_res = 2;
+    OpenRequest open_req = 3;
+    OpenResponse open_res = 4;
+    SecureEnvelope envelope = 5;
+  }
+}
+
+message ChallengeResponse {
+  bytes challenge = 1;
+  uint32 difficulty = 2;
+  string challenge_id = 3;
+}
+
+message OpenRequest {
+  // Uncompressed P-256 public key (0x04 || X || Y), 65 bytes.
+  bytes client_public_key = 1;
+  string challenge_id = 2;
+  uint64 pow_nonce = 3;
+  bytes client_binding = 4;
+}
+
+message OpenResponse {
+  string channel_id = 1;
+  bytes server_public_key = 2;
+  uint32 ttl_secs = 3;
+}
+
+message SecureEnvelope {
+  string channel_id = 1;
+  uint64 counter = 2;
+  int64 ts_ms = 3;
+  bytes nonce = 4;
+  bytes proof = 5;
+  bytes ciphertext = 6;
+}
+
+// Inner (encrypted) RPC — no HTTP verb / path / query strings on the wire.
+message RpcRequest {
+  // Opaque scrambled opcode (see server/client op tables).
+  uint32 op = 1;
+  // JsonCompat-encoded JSON body (empty for read ops).
+  bytes body = 2;
+  // Opaque args (path/query substitutes). Prefer short keys: i, a, h, f, t, l …
+  map<string, string> args = 3;
+}
+
+message RpcResponse {
+  uint32 status = 1;
+  bytes body = 2;
+  string error = 3;
+  string code = 4;
+}
+
+message JsonCompat {
+  string json = 1;
+}
+
+message Profile {
+  string user_id = 1;
+  string handle = 2;
+  string display_name = 3;
+}
+
+message Account {
+  string id = 1;
+  string kind = 2;
+  string currency = 3;
+  string status = 4;
+  int64 balance_minor = 5;
+}
+
+message BankMe {
+  string user_id = 1;
+  string username = 2;
+  Profile profile = 3;
+  repeated Account accounts = 4;
+  string currency = 5;
+}
