@@ -41,7 +41,8 @@ export function userFacingError(err: unknown): string {
   const byCode: Record<string, string> = {
     origin_mismatch:
       'Сессия банка устарела после обновления. Обновите страницу и попробуйте снова.',
-    authentication_failed: 'Не удалось подтвердить passkey. Проверьте имя и попробуйте снова.',
+    authentication_failed:
+      'Не удалось подтвердить passkey. Очистите поле имени (не должно быть «null»), обновите страницу и повторите — или войдите без имени, выбрав ключ на устройстве.',
     invalid_ceremony: 'Не удалось проверить passkey. Попробуйте другое устройство или браузер.',
     rate_limited: 'Слишком много попыток. Подождите немного и повторите.',
     conflict: 'Такой пользователь уже зарегистрирован — войдите.',
@@ -87,23 +88,13 @@ export function formatDate(value: string | null | undefined): string {
 }
 
 export async function fetchPdf(url: string): Promise<Blob> {
-  const { ApiError } = await import('@/lib/api')
-  const extra = await import('@/lib/device').then((m) => m.deviceHeaders())
-  const res = await fetch(url, {
-    credentials: 'same-origin',
-    headers: { ...extra },
-  })
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`
-    let code: string | undefined
-    try {
-      const data = (await res.json()) as { error?: string; code?: string }
-      if (data.error) msg = data.error
-      code = data.code
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(res.status, msg, code)
+  const { api, ApiError } = await import('@/lib/api')
+  const data = await api<{ pdf_b64?: string; filename?: string; raw?: string }>('GET', url)
+  if (!data?.pdf_b64) {
+    throw new ApiError(500, 'PDF missing in response')
   }
-  return res.blob()
+  const bin = atob(data.pdf_b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new Blob([bytes], { type: 'application/pdf' })
 }

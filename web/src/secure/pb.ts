@@ -74,8 +74,11 @@ export class PbWriter {
     this.push(v)
   }
 
+  /** Always emit length-delimited field (incl. empty) — required for Empty oneof arms. */
   message(field: number, bytes: Uint8Array) {
-    this.bytesField(field, bytes)
+    this.tag(field, 2)
+    this.varint(bytes.length)
+    if (bytes.length) this.push(bytes)
   }
 }
 

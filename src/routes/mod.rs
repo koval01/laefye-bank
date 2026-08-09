@@ -1,4 +1,7 @@
 //! HTTP routers — role-split: public customer edge vs corp admin.
+//!
+//! Public edge exposes only `POST /api` (+ healthz / debug tunnel RP).
+//! All business + passkey handlers are reached via encrypted oneshot dispatch.
 
 #[cfg(feature = "admin-api")]
 pub mod admin;
@@ -14,7 +17,6 @@ pub mod notify;
 use axum::middleware;
 use axum::routing::get;
 use axum::Router;
-use passkey_rs::axum::router as passkey_router;
 use tower_http::trace::TraceLayer;
 
 use crate::config::AppRole;
@@ -23,25 +25,15 @@ use crate::AppState;
 
 pub fn router(state: AppState) -> Router {
     let role = state.app_role;
-    let mut app = Router::new()
-        .route("/healthz", get(|| async { "ok" }))
-        .merge(passkey_router(state.passkey.clone()));
+    let mut app = Router::new().route("/healthz", get(|| async { "ok" }));
 
     match role {
         AppRole::Public => {
             #[cfg(feature = "customer-api")]
             {
-                tracing::info!("router role=public (customer edge — no admin API)");
-                let gated = axum::Router::new()
-                    .merge(bank::router(state.clone()))
-                    .merge(account::router(state.clone()))
-                    .merge(notify::router(state.clone()))
-                    .layer(middleware::from_fn(crate::secure::require_secure_channel));
+                tracing::info!("router role=public — single POST /api surface");
                 app = app
                     .merge(crate::secure::router(state.clone()))
-                    .merge(notify::heartbeat_router(state.clone()))
-                    .merge(bank::dsm_public_router(state.clone()))
-                    .merge(gated)
                     .merge(debug::router(state.clone()));
             }
             #[cfg(not(feature = "customer-api"))]
@@ -55,7 +47,9 @@ pub fn router(state: AppState) -> Router {
             #[cfg(feature = "admin-api")]
             {
                 tracing::info!("router role=admin (corp network — admin API only)");
-                app = app.merge(admin::router(state.clone()));
+                app = app
+                    .merge(passkey_rs::axum::router(state.passkey.clone()))
+                    .merge(admin::router(state.clone()));
             }
             #[cfg(not(feature = "admin-api"))]
             {

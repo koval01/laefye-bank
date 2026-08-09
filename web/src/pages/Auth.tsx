@@ -2,12 +2,18 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Fingerprint } from 'lucide-react'
 import { Logo } from '@/components/Logo'
-import { PrefetchLink } from '@/components/PrefetchLink'
 import { Button } from '@/components/ui/button'
 import { Card, Input, Label } from '@/components/ui/input'
 import { loginPasskey, registerPasskey } from '@/lib/api'
 import { userFacingError } from '@/lib/utils'
 import { getVisitorId } from '@/lib/device'
+
+/** Drop autofill junk like the literal string "null". */
+function sanitizeUsername(raw: string): string {
+  const u = raw.trim()
+  if (!u || u.toLowerCase() === 'null' || u.toLowerCase() === 'undefined') return ''
+  return u
+}
 
 export default function AuthPage() {
   const nav = useNavigate()
@@ -28,10 +34,12 @@ export default function AuthPage() {
     setError(null)
     setBusy(true)
     try {
+      const user = sanitizeUsername(username)
       if (mode === 'register') {
-        await registerPasskey(username.trim(), displayName.trim() || undefined)
+        if (!user) throw new Error('Укажите имя пользователя')
+        await registerPasskey(user, displayName.trim() || undefined)
       } else {
-        await loginPasskey(username.trim() || undefined)
+        await loginPasskey(user || undefined)
       }
       nav('/app', { viewTransition: true })
     } catch (err) {
@@ -43,16 +51,14 @@ export default function AuthPage() {
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center px-6 py-10">
-      <PrefetchLink to="/" className="mb-8 inline-flex w-fit">
-        <Logo to="/" size="md" as="span" />
-      </PrefetchLink>
+      <Logo to="/" size="md" className="mb-8" />
       <Card className="route-enter">
         <h2 className="font-display text-2xl font-semibold">
           {mode === 'register' ? 'Открытие счёта' : 'Вход'}
         </h2>
         <p className="mt-2 text-sm text-fog">
           {mode === 'register'
-            ? 'Создайте passkey на устройстве — пароль не потребуется.'
+            ? 'Имя пользователя станет вашим @ником для переводов. Passkey — вместо пароля.'
             : 'Подтвердите вход passkey на этом устройстве.'}
         </p>
         <div className="mt-5 mb-5 flex gap-2">
@@ -75,15 +81,22 @@ export default function AuthPage() {
         </div>
         <form className="space-y-4" onSubmit={submit}>
           <div>
-            <Label htmlFor="user">Имя пользователя</Label>
+            <Label htmlFor="user">{mode === 'register' ? '@ник' : 'Имя пользователя'}</Label>
             <Input
               id="user"
               autoComplete="username webauthn"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) =>
+                setUsername(
+                  mode === 'register' ? e.target.value.toLowerCase() : e.target.value,
+                )
+              }
               placeholder="username"
               required={mode === 'register'}
             />
+            {mode === 'register' && (
+              <p className="mt-1 text-xs text-fog">По нему вам будут переводить деньги.</p>
+            )}
           </div>
           {mode === 'register' && (
             <div>

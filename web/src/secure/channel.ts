@@ -287,25 +287,8 @@ export async function secureRpc<T = unknown>(
 export function shouldUseSecureChannel(url: string): boolean {
   // Playwright / local UI harness: plain JSON mocks without ECDH envelope.
   if (import.meta.env.VITE_E2E_PLAIN_API === '1') return false
-  if (url === '/api' || url.startsWith('/api/secure/')) return false
-  if (url.startsWith('/api/register/') || url.startsWith('/api/login/') || url.startsWith('/api/step-up/'))
-    return false
-  if (url === '/api/logout' || url === '/api/rp' || url === '/api/me') return false
-  if (url.startsWith('/api/kyc/documents') || url.startsWith('/api/documents/')) return false
-  if (url.startsWith('/api/debug')) return false
-  if (url.startsWith('/api/session/heartbeat')) return false
-  return (
-    url.startsWith('/api/bank') ||
-    url.startsWith('/api/accounts') ||
-    url.startsWith('/api/transactions') ||
-    url.startsWith('/api/transfers') ||
-    url.startsWith('/api/fx') ||
-    url.startsWith('/api/market') ||
-    url.startsWith('/api/directory') ||
-    url.startsWith('/api/kyc') ||
-    url.startsWith('/api/crypto') ||
-    url.startsWith('/api/account') ||
-    url.startsWith('/api/session') ||
-    url.startsWith('/api/notifications')
-  )
+  // Everything under /api goes through the single POST /api protobuf surface
+  // (except the transport itself, which posts to `/api`).
+  if (url === '/api' || url.startsWith('/api?')) return false
+  return url.startsWith('/api/')
 }

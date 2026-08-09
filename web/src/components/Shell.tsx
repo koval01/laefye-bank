@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
-import { Link, NavLink } from 'react-router-dom'
 import { Home, Receipt, Send, UserRound, Wallet } from 'lucide-react'
 import { Logo } from '@/components/Logo'
 import { NotificationBell } from '@/components/NotificationBell'
+import { PrefetchLink, PrefetchNavLink } from '@/components/PrefetchLink'
+import { RouteStage } from '@/components/RouteStage'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { LinkStatus } from '@/lib/session-watch'
@@ -62,12 +63,12 @@ export function Shell({
           </span>
           {onUnread && <NotificationBell unread={unread} onUnread={onUnread} />}
           {username && (
-            <Link
+            <PrefetchLink
               to="/app/account"
               className="max-w-[10rem] truncate rounded-full bg-panel-2 px-3 py-1 text-xs text-fog transition hover:text-snow"
             >
               {username}
-            </Link>
+            </PrefetchLink>
           )}
           {onLogout && (
             <Button variant="ghost" size="sm" onClick={onLogout}>
@@ -77,12 +78,14 @@ export function Shell({
         </div>
       </header>
 
-      <main className="flex-1">{children}</main>
+      <main className="flex-1">
+        <RouteStage>{children}</RouteStage>
+      </main>
 
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-line/70 bg-void/95 backdrop-blur-xl lg:static lg:mt-10 lg:border-t-0 lg:bg-transparent lg:backdrop-blur-none">
         <div className="mx-auto grid max-w-3xl grid-cols-5 gap-1 px-2 py-2 lg:max-w-5xl lg:rounded-2xl lg:border lg:border-line lg:bg-panel lg:px-2 lg:py-2">
           {links.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
+            <PrefetchNavLink
               key={to}
               to={to}
               end={end}
@@ -95,7 +98,7 @@ export function Shell({
             >
               <Icon className="h-5 w-5" strokeWidth={2.25} />
               {label}
-            </NavLink>
+            </PrefetchNavLink>
           ))}
         </div>
       </nav>

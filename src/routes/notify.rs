@@ -18,12 +18,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/notifications", get(list_notifications))
         .route("/api/notifications/read-all", post(read_all))
         .route("/api/notifications/{id}/read", post(read_one))
-        .with_state(state)
-}
-
-/// Clear-HTTPS heartbeat so rotating proof cookies can be Set-Cookie'd.
-pub fn heartbeat_router(state: AppState) -> Router {
-    Router::new()
         .route("/api/session/heartbeat", get(heartbeat))
         .with_state(state)
 }

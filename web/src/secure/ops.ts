@@ -14,6 +14,7 @@ export const OP = {
   DIRECTORY_LOOKUP: 0x6c30,
   KYC_GET: 0x7d01,
   KYC_POST: 0x7d02,
+  KYC_UPLOAD: 0x7d03,
   CRYPTO_SETTINGS: 0x8e01,
   CRYPTO_DEPOSIT_ADDR: 0x8e02,
   CRYPTO_QUOTE_DEPOSIT: 0x8e03,
@@ -32,11 +33,25 @@ export const OP = {
   NOTIFICATIONS: 0xa011,
   NOTIFICATIONS_READ_ALL: 0xa012,
   NOTIFICATION_READ: 0xa013,
+  HEARTBEAT: 0xa020,
+  REGISTER_BEGIN: 0xb101,
+  REGISTER_FINISH: 0xb102,
+  LOGIN_BEGIN: 0xb111,
+  LOGIN_FINISH: 0xb112,
+  STEP_UP_BEGIN: 0xb121,
+  STEP_UP_FINISH: 0xb122,
+  LOGOUT: 0xb130,
+  RP: 0xb140,
+  ME: 0xb150,
+  DOC_STATEMENT: 0xc101,
+  DOC_RECEIPT: 0xc102,
+  DSM_INFO: 0xc110,
+  DSM_VERIFY: 0xc111,
 } as const
 
 export type ResolvedOp = { op: number; args: Record<string, string> }
 
-/** Map legacy method+URL onto opaque op + short args (never sent as HTTP path). */
+/** Map logical method+URL onto opaque op + short args (never sent as HTTP path). */
 export function resolveOp(method: string, url: string): ResolvedOp | null {
   const u = new URL(url, 'https://local.invalid')
   const path = u.pathname
@@ -69,6 +84,9 @@ export function resolveOp(method: string, url: string): ResolvedOp | null {
   const detail = path.match(/^\/api\/transactions\/([^/]+)$/)
   if (m === 'GET' && detail) return { op: OP.TXN_DETAIL, args: { ...args, i: detail[1]! } }
 
+  const receipt = path.match(/^\/api\/documents\/receipt\/([^/]+)$/)
+  if (m === 'GET' && receipt) return { op: OP.DOC_RECEIPT, args: { ...args, i: receipt[1]! } }
+
   const sess = path.match(/^\/api\/account\/sessions\/([^/]+)$/)
   if (m === 'POST' && sess && sess[1] !== 'revoke-others') {
     return { op: OP.ACCOUNT_SESSION_REVOKE, args: { ...args, i: decodeURIComponent(sess[1]!) } }
@@ -89,6 +107,7 @@ export function resolveOp(method: string, url: string): ResolvedOp | null {
     'GET /api/directory/lookup': OP.DIRECTORY_LOOKUP,
     'GET /api/kyc': OP.KYC_GET,
     'POST /api/kyc': OP.KYC_POST,
+    'POST /api/kyc/documents/b64': OP.KYC_UPLOAD,
     'GET /api/crypto/settings': OP.CRYPTO_SETTINGS,
     'GET /api/crypto/deposit-address': OP.CRYPTO_DEPOSIT_ADDR,
     'GET /api/crypto/quote/deposit': OP.CRYPTO_QUOTE_DEPOSIT,
@@ -105,6 +124,19 @@ export function resolveOp(method: string, url: string): ResolvedOp | null {
     'POST /api/account/data-requests': OP.ACCOUNT_DATA_REQ_CREATE,
     'GET /api/notifications': OP.NOTIFICATIONS,
     'POST /api/notifications/read-all': OP.NOTIFICATIONS_READ_ALL,
+    'GET /api/session/heartbeat': OP.HEARTBEAT,
+    'POST /api/register/begin': OP.REGISTER_BEGIN,
+    'POST /api/register/finish': OP.REGISTER_FINISH,
+    'POST /api/login/begin': OP.LOGIN_BEGIN,
+    'POST /api/login/finish': OP.LOGIN_FINISH,
+    'POST /api/step-up/begin': OP.STEP_UP_BEGIN,
+    'POST /api/step-up/finish': OP.STEP_UP_FINISH,
+    'POST /api/logout': OP.LOGOUT,
+    'GET /api/rp': OP.RP,
+    'GET /api/me': OP.ME,
+    'GET /api/documents/statement': OP.DOC_STATEMENT,
+    'GET /api/documents/dsm': OP.DSM_INFO,
+    'POST /api/documents/dsm/verify': OP.DSM_VERIFY,
   }
   const op = table[`${m} ${path}`]
   if (op == null) return null

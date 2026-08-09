@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/directory/lookup", get(lookup_handle))
         .route("/api/kyc", get(kyc_status).post(kyc_submit))
         .route("/api/kyc/documents", post(kyc_upload))
+        .route("/api/kyc/documents/b64", post(kyc_upload_b64))
         .route("/api/crypto/settings", get(crypto_public_settings))
         .route("/api/crypto/deposit-address", get(crypto_deposit_address))
         .route("/api/crypto/quote/deposit", get(crypto_quote_deposit))
@@ -133,6 +134,47 @@ fn public_account(a: &ledger::AccountView) -> serde_json::Value {
     })
 }
 
+/// Use registration username as @handle + passkey display_name — no second form.
+async fn ensure_profile_from_registration(
+    state: &AppState,
+    session: &passkey_rs::session::Session,
+) -> Result<Option<auth_profile::BankProfile>, axum::response::Response> {
+    match auth_profile::get_by_user(&state.auth_db, session.user_id).await {
+        Ok(Some(p)) => return Ok(Some(p)),
+        Ok(None) => {}
+        Err(e) => return Err(err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
+
+    let Ok(handle) = auth_profile::normalize_handle(&session.username) else {
+        // Username doesn't fit handle rules — fall back to onboarding UI.
+        return Ok(None);
+    };
+
+    match auth_profile::get_by_handle(&state.auth_db, &handle).await {
+        Ok(Some(other)) if other.user_id != session.user_id => return Ok(None),
+        Ok(_) => {}
+        Err(e) => return Err(err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
+
+    let display = match state.passkey.users.find_user_by_id(session.user_id).await {
+        Ok(Some(u)) if !u.display_name.trim().is_empty() => u.display_name,
+        Ok(_) => session.username.clone(),
+        Err(_) => session.username.clone(),
+    };
+
+    match auth_profile::upsert_profile(&state.auth_db, session.user_id, &handle, &display).await {
+        Ok(p) => Ok(Some(p)),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("bank_profiles_handle_uidx") || msg.contains("duplicate key") {
+                Ok(None)
+            } else {
+                Err(err(StatusCode::INTERNAL_SERVER_ERROR, msg))
+            }
+        }
+    }
+}
+
 async fn bank_me(State(state): State<AppState>, jar: CookieJar,
     headers: HeaderMap) -> impl IntoResponse {
     let session = match require_session(&state, &jar, &headers).await {
@@ -140,12 +182,12 @@ async fn bank_me(State(state): State<AppState>, jar: CookieJar,
         Err(r) => return r,
     };
 
-    let profile = match auth_profile::get_by_user(&state.auth_db, session.user_id).await {
+    let profile = match ensure_profile_from_registration(&state, &session).await {
         Ok(p) => p,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(r) => return r,
     };
 
-    // Ensure checking exists once profile is claimed (or auto-provision for username handle).
+    // Open welcome checking once a handle exists (from registration or claim).
     let accounts = if profile.is_some() {
         match ledger::ensure_checking_with_welcome(
             &state.ledger_db,
@@ -924,6 +966,76 @@ async fn kyc_upload(
 
     let Some(bytes) = file_bytes else {
         return err(StatusCode::BAD_REQUEST, "file required");
+    };
+
+    match crate::kyc::add_document(
+        &state.auth_db,
+        store,
+        session.user_id,
+        case.id,
+        &doc_type,
+        &content_type,
+        &bytes,
+    )
+    .await
+    {
+        Ok(id) => Json(serde_json::json!({ "id": id })).into_response(),
+        Err(e) => err(StatusCode::BAD_REQUEST, e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct KycB64Body {
+    doc_type: String,
+    #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
+    content_type: Option<String>,
+    data_b64: String,
+}
+
+/// JSON/base64 upload for the encrypted channel (no multipart on the wire).
+async fn kyc_upload_b64(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(body): Json<KycB64Body>,
+) -> impl IntoResponse {
+    let session = match require_session(&state, &jar, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let Some(store) = &state.kyc else {
+        return err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Загрузка документов временно недоступна",
+        );
+    };
+    let case = match crate::kyc::get_or_create_draft(&state.auth_db, session.user_id).await {
+        Ok(c) => c,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    if !matches!(case.status.as_str(), "draft" | "resubmit") {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "В текущем статусе нельзя загружать документы",
+        );
+    }
+    let bytes = match base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        body.data_b64.trim(),
+    ) {
+        Ok(b) => b,
+        Err(_) => return err(StatusCode::BAD_REQUEST, "invalid data_b64"),
+    };
+    let _ = body.filename;
+    let content_type = body
+        .content_type
+        .unwrap_or_else(|| "application/octet-stream".into());
+    let doc_type = if body.doc_type.trim().is_empty() {
+        "other".into()
+    } else {
+        body.doc_type
     };
 
     match crate::kyc::add_document(

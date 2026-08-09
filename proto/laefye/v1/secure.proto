@@ -1,8 +1,8 @@
 syntax = "proto3";
 package laefye.v1;
 
-// Single public surface: POST /api with ApiFrame.
-// Passkey ceremonies, PDF binary, multipart KYC, and heartbeat cookies stay outside.
+// Single public surface: POST /api with ApiFrame (protobuf only).
+// All ops (passkey, bank, KYC, docs, heartbeat) ride inside encrypted envelopes.
 
 message Empty {}
 

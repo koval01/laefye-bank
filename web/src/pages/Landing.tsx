@@ -11,12 +11,11 @@ import { cn } from '@/lib/utils'
  */
 export default function Landing() {
   const rootRef = useRef<HTMLDivElement>(null)
-  const reduced = useRef(false)
 
   useEffect(() => {
-    reduced.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const root = rootRef.current
-    if (!root || reduced.current) return
+    if (!root || reduced) return
 
     const layers = root.querySelectorAll<HTMLElement>('[data-parallax]')
     let raf = 0
@@ -30,10 +29,8 @@ export default function Landing() {
         const speed = Number(el.dataset.parallax) || 0.2
         const rect = el.parentElement?.getBoundingClientRect()
         const local = rect ? -rect.top : y
-        const shift = local * speed
-        el.style.transform = `translate3d(0, ${shift.toFixed(2)}px, 0)`
+        el.style.transform = `translate3d(0, ${(local * speed).toFixed(2)}px, 0)`
       }
-      // Depth fade on hero mark
       const hero = root.querySelector<HTMLElement>('[data-hero-fade]')
       if (hero) {
         const t = Math.min(1, Math.max(0, y / (vh * 0.55)))
@@ -59,7 +56,6 @@ export default function Landing() {
 
   return (
     <div ref={rootRef} className="landing-root relative bg-void text-snow">
-      {/* ── Sticky chrome ─────────────────────────────────── */}
       <header className="landing-header fixed inset-x-0 top-0 z-40">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:h-[4.25rem] sm:px-8">
           <Logo size="md" animated as="span" />
@@ -76,9 +72,7 @@ export default function Landing() {
         </div>
       </header>
 
-      {/* ── Hero: one composition, brand first ─────────────── */}
       <section className="relative flex min-h-dvh flex-col justify-end overflow-hidden pb-16 pt-24 sm:pb-20 sm:pt-28">
-        {/* Full-bleed atmosphere */}
         <div className="pointer-events-none absolute inset-0" aria-hidden>
           <div
             data-parallax="0.12"
@@ -137,7 +131,6 @@ export default function Landing() {
         </a>
       </section>
 
-      {/* ── Passkey plane ─────────────────────────────────── */}
       <FeaturePlane
         id="passkey"
         tint="pink"
@@ -148,7 +141,6 @@ export default function Landing() {
         body="Face ID, Touch ID или ключ на устройстве. Сервер не хранит секреты, которые можно украсть из формы."
       />
 
-      {/* ── @transfers ────────────────────────────────────── */}
       <FeaturePlane
         id="transfers"
         tint="mint"
@@ -160,7 +152,6 @@ export default function Landing() {
         reverse
       />
 
-      {/* ── USDT ──────────────────────────────────────────── */}
       <FeaturePlane
         id="usdt"
         tint="mixed"
@@ -171,7 +162,6 @@ export default function Landing() {
         body="Пополнение и вывод через TRON TRC-20. Курс обновляется сам — ты видишь, сколько придёт до отправки."
       />
 
-      {/* ── Closing CTA ───────────────────────────────────── */}
       <section className="relative overflow-hidden px-5 py-28 sm:px-8 sm:py-36">
         <div
           data-parallax="0.1"
@@ -240,12 +230,11 @@ function FeaturePlane({
       <div className="pointer-events-none absolute inset-0" aria-hidden>
         <div
           data-parallax={String(parallax)}
-          className="absolute h-[50vmax] w-[50vmax] rounded-full blur-3xl will-change-transform"
-          style={{
-            background: `radial-gradient(circle, ${glow}, transparent 70%)`,
-            [reverse ? 'right' : 'left']: '-10%',
-            top: '10%',
-          }}
+          className={cn(
+            'absolute top-[10%] h-[50vmax] w-[50vmax] rounded-full blur-3xl will-change-transform',
+            reverse ? 'right-[-10%]' : 'left-[-10%]',
+          )}
+          style={{ background: `radial-gradient(circle, ${glow}, transparent 70%)` }}
         />
         <div
           data-parallax={String(parallax + 0.12)}

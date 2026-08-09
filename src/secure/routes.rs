@@ -1,9 +1,9 @@
 //! Single public surface: `POST /api` (protobuf ApiFrame).
 
 use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::post;
 use axum::{Router, body::Bytes};
 use prost::Message;
 use rand::RngCore;
@@ -26,20 +26,7 @@ const MAX_SKEW_MS: i64 = 120_000;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api", post(api_entry))
-        // Legacy split endpoints (old SPA bundles still call these).
-        .route("/api/secure/challenge", get(challenge_legacy))
-        .route("/api/secure/open", post(open_legacy))
-        .route("/api/secure/rpc", post(rpc_legacy))
         .with_state(state)
-}
-
-fn pb_raw(status: StatusCode, bytes: Vec<u8>) -> Response {
-    (
-        status,
-        [(header::CONTENT_TYPE, "application/x-protobuf")],
-        bytes,
-    )
-        .into_response()
 }
 
 fn pb_frame(status: StatusCode, frame: &pb::ApiFrame) -> Response {
@@ -52,9 +39,6 @@ fn pb_frame(status: StatusCode, frame: &pb::ApiFrame) -> Response {
 }
 
 fn frame_err(status: StatusCode, code: &str, error: &str) -> Response {
-    // Transport errors before a channel: still ApiFrame-shaped via envelope-less
-    // RpcResponse bytes would break the oneof — return bare RpcResponse only for
-    // pre-channel failures so clients can decode either.
     (
         status,
         [(header::CONTENT_TYPE, "application/x-protobuf")],
@@ -80,28 +64,25 @@ async fn api_entry(State(state): State<AppState>, headers: HeaderMap, body: Byte
 
     let frame = match pb::ApiFrame::decode(body.as_ref()) {
         Ok(f) => f,
-        Err(_) => {
-            // Backward-compat: raw SecureEnvelope (old clients posting to /api).
-            if let Ok(env) = pb::SecureEnvelope::decode(body.as_ref()) {
-                return match handle_envelope(state, &store, headers, env).await {
-                    Ok(out) => pb_raw(StatusCode::OK, out.encode_to_vec()),
-                    Err(r) => r,
-                };
-            }
-            return frame_err(StatusCode::BAD_REQUEST, "bad_request", "invalid frame");
-        }
+        Err(_) => return frame_err(StatusCode::BAD_REQUEST, "bad_request", "invalid frame"),
     };
 
     match frame.payload {
         Some(Payload::ChallengeReq(_)) => challenge(&store).await,
         Some(Payload::OpenReq(req)) => open(&store, req).await,
         Some(Payload::Envelope(env)) => match handle_envelope(state, &store, headers, env).await {
-            Ok(out) => pb_frame(
-                StatusCode::OK,
-                &pb::ApiFrame {
-                    payload: Some(Payload::Envelope(out)),
-                },
-            ),
+            Ok((out, cookies)) => {
+                let mut res = pb_frame(
+                    StatusCode::OK,
+                    &pb::ApiFrame {
+                        payload: Some(Payload::Envelope(out)),
+                    },
+                );
+                for c in cookies {
+                    res.headers_mut().append(header::SET_COOKIE, c);
+                }
+                res
+            }
             Err(r) => r,
         },
         Some(Payload::ChallengeRes(_)) | Some(Payload::OpenRes(_)) | None => {
@@ -148,20 +129,6 @@ async fn challenge(store: &crate::secure::ChannelStore) -> Response {
                 payload: Some(Payload::ChallengeRes(res)),
             },
         ),
-        Err(r) => r,
-    }
-}
-
-async fn challenge_legacy(State(state): State<AppState>) -> Response {
-    let Some(store) = state.secure.clone() else {
-        return frame_err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "unavailable",
-            "secure channel unavailable",
-        );
-    };
-    match mint_challenge(&store).await {
-        Ok(res) => pb_raw(StatusCode::OK, res.encode_to_vec()),
         Err(r) => r,
     }
 }
@@ -228,30 +195,12 @@ async fn open(store: &crate::secure::ChannelStore, req: pb::OpenRequest) -> Resp
     }
 }
 
-async fn open_legacy(State(state): State<AppState>, body: Bytes) -> Response {
-    let Some(store) = state.secure.clone() else {
-        return frame_err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "unavailable",
-            "secure channel unavailable",
-        );
-    };
-    let req = match pb::OpenRequest::decode(body.as_ref()) {
-        Ok(r) => r,
-        Err(_) => return frame_err(StatusCode::BAD_REQUEST, "bad_request", "invalid open"),
-    };
-    match do_open(&store, req).await {
-        Ok(res) => pb_raw(StatusCode::OK, res.encode_to_vec()),
-        Err(r) => r,
-    }
-}
-
 async fn handle_envelope(
     state: AppState,
     store: &crate::secure::ChannelStore,
     headers: HeaderMap,
     env: pb::SecureEnvelope,
-) -> Result<pb::SecureEnvelope, Response> {
+) -> Result<(pb::SecureEnvelope, Vec<HeaderValue>), Response> {
     let mut ch = match store.load_channel(&env.channel_id).await {
         Ok(Some(c)) => c,
         Ok(None) => {
@@ -345,8 +294,8 @@ async fn handle_envelope(
         }
     }
 
-    let rpc_res = dispatch::dispatch(state, cookie, origin, forward, rpc_req).await;
-    let res_bytes = rpc_res.encode_to_vec();
+    let dispatched = dispatch::dispatch(state, cookie, origin, forward, rpc_req).await;
+    let res_bytes = dispatched.rpc.encode_to_vec();
     let (nonce, ct) = match encrypt(&ch.enc, &res_bytes) {
         Ok(v) => v,
         Err(_) => {
@@ -364,30 +313,15 @@ async fn handle_envelope(
     if let Err(e) = store.save_channel(&env.channel_id, &ch).await {
         tracing::warn!(error = %e, "save channel failed");
     }
-    Ok(pb::SecureEnvelope {
-        channel_id: env.channel_id,
-        counter: out_counter,
-        ts_ms: ts,
-        nonce,
-        proof,
-        ciphertext: ct,
-    })
-}
-
-async fn rpc_legacy(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
-    let Some(store) = state.secure.clone() else {
-        return frame_err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "unavailable",
-            "secure channel unavailable",
-        );
-    };
-    let env = match pb::SecureEnvelope::decode(body.as_ref()) {
-        Ok(e) => e,
-        Err(_) => return frame_err(StatusCode::BAD_REQUEST, "bad_request", "invalid envelope"),
-    };
-    match handle_envelope(state, &store, headers, env).await {
-        Ok(out) => pb_raw(StatusCode::OK, out.encode_to_vec()),
-        Err(r) => r,
-    }
+    Ok((
+        pb::SecureEnvelope {
+            channel_id: env.channel_id,
+            counter: out_counter,
+            ts_ms: ts,
+            nonce,
+            proof,
+            ciphertext: ct,
+        },
+        dispatched.set_cookies,
+    ))
 }

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import {
   ArrowUpRight,
   CheckCircle2,
   FileText,
-  Fingerprint,
   RefreshCw,
   ShieldCheck,
   Upload,
@@ -12,6 +11,8 @@ import {
 import { Shell } from '@/components/Shell'
 import { Logo } from '@/components/Logo'
 import { ModalShell } from '@/components/ModalShell'
+import { PrefetchLink } from '@/components/PrefetchLink'
+import { RouteStage } from '@/components/RouteStage'
 import { Button } from '@/components/ui/button'
 import { Card, Input, Label } from '@/components/ui/input'
 import {
@@ -19,8 +20,6 @@ import {
   type BankMe,
   type Txn,
   dedupeTxns,
-  loginPasskey,
-  registerPasskey,
   requirePasskeyThen,
   withStepUp,
 } from '@/lib/api'
@@ -33,8 +32,24 @@ import {
   userFacingError,
   fetchPdf,
 } from '@/lib/utils'
-import { getVisitorId } from '@/lib/device'
 import { useSessionWatch } from '@/lib/session-watch'
+import { prefetchIdle, registerPrefetch } from '@/lib/prefetch'
+
+const Landing = lazy(() => import('@/pages/Landing'))
+const AuthPage = lazy(() => import('@/pages/Auth'))
+
+registerPrefetch('/', () => import('@/pages/Landing'))
+registerPrefetch('/auth', () => import('@/pages/Auth'))
+registerPrefetch('/app', async () => {
+  const { api: warmApi } = await import('@/lib/api')
+  await warmApi('GET', '/api/bank/me').catch(() => null)
+})
+
+function RouteFallback() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center text-sm text-fog">Загрузка…</div>
+  )
+}
 
 function NotFoundPage() {
   return (
@@ -55,180 +70,13 @@ function NotFoundPage() {
           в банк.
         </p>
         <div className="flex flex-wrap justify-center gap-2 pt-3">
-          <Link to="/">
+          <PrefetchLink to="/">
             <Button>На главную</Button>
-          </Link>
-          <Link to="/auth">
+          </PrefetchLink>
+          <PrefetchLink to="/auth">
             <Button variant="outline">Войти</Button>
-          </Link>
+          </PrefetchLink>
         </div>
-      </Card>
-    </div>
-  )
-}
-
-function Landing() {
-  return (
-    <div className="relative min-h-dvh overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_70%_-10%,rgba(255,61,127,0.18),transparent_55%)]" />
-
-      <div className="relative mx-auto flex min-h-dvh w-full max-w-6xl flex-col px-6 py-8 sm:px-10 lg:px-12">
-        <header className="flex items-center justify-between">
-          <Logo size="lg" animated />
-          <nav className="flex items-center gap-2 sm:gap-3">
-            <Link to="/auth?mode=login">
-              <Button variant="ghost" size="sm">
-                Войти
-              </Button>
-            </Link>
-            <Link to="/auth">
-              <Button size="sm">Открыть счёт</Button>
-            </Link>
-          </nav>
-        </header>
-
-        <section className="flex flex-1 flex-col justify-center gap-10 py-16 lg:grid lg:grid-cols-[1.15fr_0.85fr] lg:items-center lg:gap-16 lg:py-20">
-          <div>
-            <h1 className="font-display text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
-              Банк, который
-              <br />
-              <span className="love-text">любит тебя</span>
-            </h1>
-            <p className="mt-6 max-w-xl text-base leading-relaxed text-fog sm:text-lg">
-              Счёт за минуту, вход по passkey, переводы по @нику и пополнение в USDT. Без паролей и
-              без отделений.
-            </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <Link to="/auth" className="sm:w-auto">
-                <Button size="lg" className="w-full sm:w-auto">
-                  Открыть счёт
-                </Button>
-              </Link>
-              <Link to="/auth?mode=login" className="sm:w-auto">
-                <Button size="lg" variant="outline" className="w-full sm:w-auto">
-                  Войти
-                </Button>
-              </Link>
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
-            {[
-              ['Passkey', 'Вход по Face ID / Touch ID — пароль не нужен'],
-              ['@переводы', 'Отправляй деньги по имени, как в мессенджере'],
-              ['USDT', 'Пополнение и вывод через TRC-20'],
-            ].map(([title, body]) => (
-              <div key={title} className="rounded-2xl border border-line/80 bg-panel/60 px-5 py-4">
-                <p className="font-display text-sm font-semibold text-pink">{title}</p>
-                <p className="mt-1 text-sm leading-relaxed text-fog">{body}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <footer className="border-t border-line/60 py-5 text-xs text-fog">
-          © {new Date().getFullYear()} Laefye
-        </footer>
-      </div>
-    </div>
-  )
-}
-
-function AuthPage() {
-  const nav = useNavigate()
-  const [mode, setMode] = useState<'register' | 'login'>(() =>
-    new URLSearchParams(window.location.search).get('mode') === 'login' ? 'login' : 'register',
-  )
-  const [username, setUsername] = useState('')
-  const [displayName, setDisplayName] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    void getVisitorId().catch(() => undefined)
-  }, [])
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setBusy(true)
-    try {
-      if (mode === 'register') {
-        await registerPasskey(username.trim(), displayName.trim() || undefined)
-      } else {
-        await loginPasskey(username.trim() || undefined)
-      }
-      nav('/app')
-    } catch (err) {
-      setError(userFacingError(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center px-6 py-10">
-      <Logo to="/" size="md" className="mb-8" />
-      <Card>
-        <h2 className="font-display text-2xl font-semibold">
-          {mode === 'register' ? 'Открытие счёта' : 'Вход'}
-        </h2>
-        <p className="mt-2 text-sm text-fog">
-          {mode === 'register'
-            ? 'Создайте passkey на устройстве — пароль не потребуется.'
-            : 'Подтвердите вход passkey на этом устройстве.'}
-        </p>
-        <div className="mt-5 mb-5 flex gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant={mode === 'register' ? 'default' : 'soft'}
-            onClick={() => setMode('register')}
-          >
-            Регистрация
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={mode === 'login' ? 'default' : 'soft'}
-            onClick={() => setMode('login')}
-          >
-            Войти
-          </Button>
-        </div>
-        <form className="space-y-4" onSubmit={submit}>
-          <div>
-            <Label htmlFor="user">Имя пользователя</Label>
-            <Input
-              id="user"
-              autoComplete="username webauthn"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="username"
-              required={mode === 'register'}
-            />
-          </div>
-          {mode === 'register' && (
-            <div>
-              <Label htmlFor="display">Отображаемое имя</Label>
-              <Input
-                id="display"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Имя"
-              />
-            </div>
-          )}
-          {error && <p className="text-sm text-pink">{error}</p>}
-          <Button className="w-full" type="submit" disabled={busy}>
-            <Fingerprint className="h-4 w-4" />
-            {busy
-              ? 'Ожидание ключа…'
-              : mode === 'register'
-                ? 'Создать passkey'
-                : 'Войти с passkey'}
-          </Button>
-        </form>
       </Card>
     </div>
   )
@@ -260,8 +108,14 @@ function useBankMe() {
   return { me, error, loading, refresh }
 }
 
-function Onboarding({ onDone }: { onDone: () => void }) {
-  const [handle, setHandle] = useState('')
+function Onboarding({
+  username,
+  onDone,
+}: {
+  username: string
+  onDone: () => void
+}) {
+  const [handle, setHandle] = useState(username.toLowerCase())
   const [displayName, setDisplayName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -289,8 +143,8 @@ function Onboarding({ onDone }: { onDone: () => void }) {
     <Card>
       <h2 className="font-display text-2xl font-semibold">Выберите @ник</h2>
       <p className="mt-2 text-sm text-fog">
-        По нему вам будут переводить деньги. При открытии рублёвого счёта зачисляется приветственный
-        бонус ₽1 000.
+        Имя при регистрации не подошло как @ник (занято или формат). Выберите другой — при открытии
+        рублёвого счёта зачислим приветственный бонус ₽1 000.
       </p>
       <form className="mt-5 space-y-4" onSubmit={submit}>
         <div>
@@ -355,17 +209,17 @@ function Dashboard({ me, refresh }: { me: BankMe; refresh: () => void }) {
         </p>
         <p className="mt-2 text-sm text-fog">@{me.profile?.handle}</p>
         <div className="mt-6 flex gap-2">
-          <Link to="/app/transfer" className="flex-1">
+          <PrefetchLink to="/app/transfer" className="flex-1">
             <Button className="w-full">
               <ArrowUpRight className="h-4 w-4" />
               Перевести
             </Button>
-          </Link>
-          <Link to="/app/crypto" className="flex-1">
+          </PrefetchLink>
+          <PrefetchLink to="/app/crypto" className="flex-1">
             <Button variant="outline" className="w-full">
               USDT
             </Button>
-          </Link>
+          </PrefetchLink>
           <Button variant="outline" onClick={refresh} aria-label="Обновить">
             <RefreshCw className="h-4 w-4" />
           </Button>
@@ -392,11 +246,11 @@ function Dashboard({ me, refresh }: { me: BankMe; refresh: () => void }) {
                 Для базового использования нужны почта, телефон, ФИО и дата рождения.
               </p>
             </div>
-            <Link to="/app/account">
+            <PrefetchLink to="/app/account">
               <Button variant="outline" size="sm">
                 Заполнить
               </Button>
-            </Link>
+            </PrefetchLink>
           </div>
         </Card>
       )}
@@ -409,21 +263,21 @@ function Dashboard({ me, refresh }: { me: BankMe; refresh: () => void }) {
               Подтвердите личность, чтобы снять лимиты на переводы и вывод.
             </p>
           </div>
-          <Link to="/app/kyc">
+          <PrefetchLink to="/app/kyc">
             <Button variant="outline" size="sm">
               <ShieldCheck className="h-4 w-4" />
               Пройти
             </Button>
-          </Link>
+          </PrefetchLink>
         </div>
       </Card>
 
       <Card>
         <div className="mb-2 flex items-center justify-between gap-3">
           <h3 className="font-semibold">Недавние движения</h3>
-          <Link to="/app/history" className="text-sm text-fog hover:text-snow">
+          <PrefetchLink to="/app/history" className="text-sm text-fog hover:text-snow">
             Все
-          </Link>
+          </PrefetchLink>
         </div>
         <ul className="divide-y divide-line/70">
           {txns.map((t) => (
@@ -618,11 +472,11 @@ function RatesPage() {
         ) : (
           <p className="text-sm text-fog">Загрузка…</p>
         )}
-        <Link to="/app/crypto">
+        <PrefetchLink to="/app/crypto">
           <Button variant="outline" className="w-full">
             Пополнить / вывести USDT
           </Button>
-        </Link>
+        </PrefetchLink>
       </Card>
       <Card className="space-y-3">
         <h3 className="font-medium">ЦБ РФ</h3>
@@ -759,11 +613,11 @@ function HistoryPage({ me }: { me: BankMe }) {
           <h2 className="font-display text-2xl font-semibold">Движения</h2>
           <p className="mt-1 text-sm text-fog">Нажмите на операцию, чтобы открыть детали</p>
         </div>
-        <Link to="/app/docs">
+        <PrefetchLink to="/app/docs">
           <Button variant="outline" size="sm">
             Документы
           </Button>
-        </Link>
+        </PrefetchLink>
       </div>
 
       <Card>
@@ -1122,16 +976,16 @@ function AccountPage({ me, onDone }: { me: BankMe; onDone: () => void }) {
               </div>
             </dl>
             <div className="flex flex-wrap gap-2 pt-1">
-              <Link to="/app/kyc">
+              <PrefetchLink to="/app/kyc">
                 <Button variant="outline" size="sm">
                   Верификация
                 </Button>
-              </Link>
-              <Link to="/app/docs">
+              </PrefetchLink>
+              <PrefetchLink to="/app/docs">
                 <Button variant="outline" size="sm">
                   Документы PDF
                 </Button>
-              </Link>
+              </PrefetchLink>
             </div>
           </Card>
 
@@ -1355,9 +1209,9 @@ function AccountPage({ me, onDone }: { me: BankMe; onDone: () => void }) {
           <Card>
             <h3 className="font-medium">Документы личности</h3>
             <p className="mt-1 text-sm text-fog">Паспорт и селфи — в разделе верификации.</p>
-            <Link to="/app/kyc" className="mt-4 inline-flex">
+            <PrefetchLink to="/app/kyc" className="mt-4 inline-flex">
               <Button variant="outline">Открыть KYC</Button>
-            </Link>
+            </PrefetchLink>
           </Card>
         </div>
       )}
@@ -1447,17 +1301,17 @@ function DocsPage({ me }: { me: BankMe }) {
         <p className="mt-1 text-sm text-fog">
           Откройте операцию во вкладке «Движения» и нажмите «Квитанция PDF».
         </p>
-        <Link to="/app/history" className="mt-4 inline-flex">
+        <PrefetchLink to="/app/history" className="mt-4 inline-flex">
           <Button variant="outline">К движениям</Button>
-        </Link>
+        </PrefetchLink>
       </Card>
 
       <Card>
         <h3 className="font-medium">Курсы RUB / USDT</h3>
         <p className="mt-1 text-sm text-fog">Рыночный USDT и индикаторы ЦБ РФ.</p>
-        <Link to="/app/fx" className="mt-4 inline-flex">
+        <PrefetchLink to="/app/fx" className="mt-4 inline-flex">
           <Button variant="outline">Открыть курсы</Button>
-        </Link>
+        </PrefetchLink>
       </Card>
 
       {pdf && (
@@ -1782,16 +1636,15 @@ function KycPage() {
     setError(null)
     setMsg(null)
     try {
-      const fd = new FormData()
-      fd.append('doc_type', docType)
-      fd.append('file', file)
-      const res = await fetch('/api/kyc/documents', {
-        method: 'POST',
-        body: fd,
-        credentials: 'same-origin',
+      const buf = new Uint8Array(await file.arrayBuffer())
+      let bin = ''
+      for (const b of buf) bin += String.fromCharCode(b)
+      await api('POST', '/api/kyc/documents/b64', {
+        doc_type: docType,
+        filename: file.name,
+        content_type: file.type || 'application/octet-stream',
+        data_b64: btoa(bin),
       })
-      const data = (await res.json().catch(() => ({}))) as { error?: string }
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
       setMsg(`${docTypeLabel(docType)} загружен`)
       setFile(null)
       if (fileRef.current) fileRef.current.value = ''
@@ -2009,7 +1862,7 @@ function AppGate() {
   useEffect(() => {
     const onLost = () => {
       resetSecureSession()
-      nav('/auth', { replace: true })
+      nav('/auth', { replace: true, viewTransition: true })
     }
     const onBeat = () => {
       /* balance/list refresh stays page-local; unread comes from watch */
@@ -2025,7 +1878,7 @@ function AppGate() {
   useEffect(() => {
     if (status === 'auth') {
       resetSecureSession()
-      nav('/auth', { replace: true })
+      nav('/auth', { replace: true, viewTransition: true })
     }
   }, [status, nav])
 
@@ -2036,7 +1889,7 @@ function AppGate() {
       /* ignore */
     }
     resetSecureSession()
-    nav('/auth')
+    nav('/auth', { viewTransition: true })
   }
 
   if (loading) {
@@ -2060,7 +1913,7 @@ function AppGate() {
         unread={unread}
         onUnread={setUnread}
       >
-        <Onboarding onDone={() => void refresh()} />
+        <Onboarding username={me.username} onDone={() => void refresh()} />
       </Shell>
     )
   }
@@ -2089,12 +1942,20 @@ function AppGate() {
 }
 
 export default function App() {
+  useEffect(() => {
+    prefetchIdle(['/auth', '/app'])
+  }, [])
+
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/auth" element={<AuthPage />} />
-      <Route path="/app/*" element={<AppGate />} />
-      <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+    <Suspense fallback={<RouteFallback />}>
+      <RouteStage>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/auth" element={<AuthPage />} />
+          <Route path="/app/*" element={<AppGate />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </RouteStage>
+    </Suspense>
   )
 }
