@@ -8,6 +8,7 @@ use prost::Message;
 use tower::ServiceExt;
 
 use crate::pb;
+#[cfg(feature = "customer-api")]
 use crate::routes::{account, bank, notify};
 use crate::AppState;
 
@@ -90,11 +91,15 @@ pub async fn dispatch(
     };
 
     // Internal-only routers (not mounted on the public edge).
+    #[cfg(feature = "customer-api")]
     let router = bank::router(state.clone())
         .merge(bank::dsm_public_router(state.clone()))
         .merge(account::router(state.clone()))
         .merge(notify::router(state.clone()))
         .merge(passkey_rs::axum::router(state.passkey.clone()));
+
+    #[cfg(not(feature = "customer-api"))]
+    let router = axum::Router::new();
 
     let res = match router.oneshot(req).await {
         Ok(r) => r,
